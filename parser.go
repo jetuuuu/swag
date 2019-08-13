@@ -665,6 +665,16 @@ func (parser *Parser) collectRequiredFields(pkgName string, properties map[strin
 	return
 }
 
+func (parser Parser) getXMLName(pkgName string, properties map[string]spec.Schema) *spec.XMLObject {
+	for k, p := range properties {
+		if p.Type[0] == "xml" {
+			delete(properties, k)
+			return &spec.XMLObject{Name: k}
+		}
+	}
+	return nil
+}
+
 func fullTypeName(pkgName, typeName string) string {
 	if pkgName != "" {
 		return pkgName + "." + typeName
@@ -713,6 +723,9 @@ func (parser *Parser) parseTypeExpr(pkgName, typeName string, typeExpr ast.Expr)
 		// collect requireds from our properties and anonymous fields
 		required := parser.collectRequiredFields(pkgName, properties, extraRequired)
 
+		// get xml object
+		xmlObject := parser.getXMLName(pkgName, properties)
+
 		// unset required from properties because we've collected them
 		for k, prop := range properties {
 			tname := prop.SchemaProps.Type[0]
@@ -727,7 +740,11 @@ func (parser *Parser) parseTypeExpr(pkgName, typeName string, typeExpr ast.Expr)
 				Type:       []string{"object"},
 				Properties: properties,
 				Required:   required,
-			}}, nil
+			},
+			SwaggerSchemaProps: spec.SwaggerSchemaProps{
+				XML: xmlObject,
+			},
+		}, nil
 
 	// type Foo Baz
 	case *ast.Ident:
@@ -835,6 +852,7 @@ func (parser *Parser) parseStruct(pkgName string, field *ast.Field) (map[string]
 	if structField.crossPkg != "" {
 		pkgName = structField.crossPkg
 	}
+
 	if _, ok := parser.TypeDefinitions[pkgName][structField.schemaType]; ok { // user type field
 		// write definition if not yet present
 		parser.ParseDefinition(pkgName, structField.schemaType,
@@ -1033,6 +1051,7 @@ func (parser *Parser) parseField(field *ast.Field) (*structField, error) {
 			return nil, err
 		}
 	}
+
 	structField := &structField{
 		name:       field.Names[0].Name,
 		schemaType: prop.SchemaType,
@@ -1057,6 +1076,10 @@ func (parser *Parser) parseField(field *ast.Field) (*structField, error) {
 	// `json:"tag"` -> json:"tag"
 	structTag := reflect.StructTag(strings.Replace(field.Tag.Value, "`", "", -1))
 	jsonTag := structTag.Get("json")
+	if jsonTag == "" {
+		jsonTag = structTag.Get("xml")
+	}
+
 	// json:"tag,hoge"
 	if strings.Contains(jsonTag, ",") {
 		// json:",hoge"
@@ -1070,6 +1093,10 @@ func (parser *Parser) parseField(field *ast.Field) (*structField, error) {
 		structField.name = ""
 	} else if jsonTag != "" {
 		structField.name = jsonTag
+	}
+
+	if field.Names[0].Name == "XMLName" {
+		structField.schemaType = "xml"
 	}
 
 	if typeTag := structTag.Get("swaggertype"); typeTag != "" {
